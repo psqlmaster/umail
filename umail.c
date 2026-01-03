@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <getopt.h> // Для обработки аргументов
+#include <getopt.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
@@ -11,7 +11,7 @@
 
 #define BUF_SIZE 4096
 
-// --- Base64 Helpers ---
+/* --- Base64 Helpers --- */
 static char encoding_table[] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
                                 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
                                 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
@@ -43,7 +43,7 @@ char *base64_encode(const unsigned char *data, size_t input_length) {
     return encoded_data;
 }
 
-// --- Network Helpers ---
+/* --- Network Helpers --- */
 void read_response(SSL *ssl) {
     char buffer[BUF_SIZE];
     int bytes;
@@ -65,7 +65,6 @@ void send_cmd(SSL *ssl, const char *cmd) {
     read_response(ssl);
 }
 
-// --- Help & Usage ---
 void print_help(const char *prog_name) {
     printf("Secure SMTP Mailer (SSL/TLS)\n");
     printf("Copyright (c) 2026, Alexander Shcheglov @sqlmaster\n\n");
@@ -85,11 +84,25 @@ void print_help(const char *prog_name) {
     printf("  %s -s smtp.gmail.com -u me@gmail.com -t admin@corp.com -S 'Alert' -b 'Error!'\n", prog_name);
 }
 
+int read_password_from_file(const char *filename, char *buffer, size_t size) {
+    FILE *f = fopen(filename, "r");
+    if (!f) {
+        perror("Error opening secret file");
+        return 0;
+    }
+
+    if (fgets(buffer, size, f) == NULL) {
+        fclose(f);
+        return 0;
+    }
+    fclose(f);
+
+    buffer[strcspn(buffer, "\r\n")] = 0;
+    return 1;
+}
 int main(int argc, char *argv[]) {
     int opt;
     int option_index = 0;
-
-    // Параметры по умолчанию
     char *server = NULL;
     int port = 465;
     char *user = NULL;
@@ -108,7 +121,6 @@ int main(int argc, char *argv[]) {
         {0, 0, 0, 0}
     };
 
-    // Разбор аргументов
     while ((opt = getopt_long(argc, argv, "s:P:u:t:S:b:h", long_options, &option_index)) != -1) {
         switch (opt) {
             case 's': server = optarg; break;
@@ -126,21 +138,18 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Проверка обязательных полей
     if (!server || !user || !to) {
         fprintf(stderr, "Error: Missing required arguments.\n");
         fprintf(stderr, "Use -h or --help for info.\n");
         return 1;
     }
 
-    // Получение пароля
     char *pass = getenv("SMTP_PASS");
     if (pass == NULL) {
         fprintf(stderr, "Error: SMTP_PASS environment variable is not set.\n");
         return 1;
     }
 
-    // Инициализация SSL
     SSL_library_init();
     OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
@@ -148,7 +157,6 @@ int main(int argc, char *argv[]) {
     SSL_CTX *ctx = SSL_CTX_new(method);
     if (!ctx) { ERR_print_errors_fp(stderr); return 1; }
 
-    // Сокет
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     struct hostent *host = gethostbyname(server);
     if (!host) {
@@ -168,7 +176,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // SSL Handshake
+    /* SSL Handshake */
     SSL *ssl = SSL_new(ctx);
     SSL_set_fd(ssl, sock);
     if (SSL_connect(ssl) <= 0) {
@@ -178,7 +186,7 @@ int main(int argc, char *argv[]) {
 
     read_response(ssl);
 
-    // SMTP Flow
+    /* SMTP Flow */
     send_cmd(ssl, "EHLO mylinuxserver\r\n");
     send_cmd(ssl, "AUTH LOGIN\r\n");
 
@@ -204,17 +212,16 @@ int main(int argc, char *argv[]) {
 
     send_cmd(ssl, "DATA\r\n");
 
-    // Headers
+    /* Headers */
     snprintf(cmd_buf, sizeof(cmd_buf), 
         "Subject: %s\r\nFrom: %s <%s>\r\nTo: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n", 
         subject, "System Alert", user, to);
     SSL_write(ssl, cmd_buf, strlen(cmd_buf));
 
-    // Body
+    /* Body */
     if (body) {
         SSL_write(ssl, body, strlen(body));
     } else {
-        // Читаем из stdin, если body не задан аргументом
         char read_buf[1024];
         while(fgets(read_buf, sizeof(read_buf), stdin) != NULL) {
             SSL_write(ssl, read_buf, strlen(read_buf));
