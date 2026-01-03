@@ -100,15 +100,24 @@ int read_password_from_file(const char *filename, char *buffer, size_t size) {
     buffer[strcspn(buffer, "\r\n")] = 0;
     return 1;
 }
+
 int main(int argc, char *argv[]) {
     int opt;
     int option_index = 0;
+
     char *server = NULL;
     int port = 465;
     char *user = NULL;
     char *to = NULL;
     char *subject = "No Subject";
-    char *body = NULL; 
+    char *body = NULL;
+    
+    // Новая переменная для пути к файлу
+    char *secret_file = NULL;
+    
+    // Буфер для пароля в памяти
+    char password[256]; 
+    memset(password, 0, sizeof(password));
 
     struct option long_options[] = {
         {"server",  required_argument, 0, 's'},
@@ -117,11 +126,12 @@ int main(int argc, char *argv[]) {
         {"to",      required_argument, 0, 't'},
         {"subject", required_argument, 0, 'S'},
         {"body",    required_argument, 0, 'b'},
+        {"secret",  required_argument, 0, 'p'}, // Новый ключ -p / --secret
         {"help",    no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "s:P:u:t:S:b:h", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:P:u:t:S:b:p:h", long_options, &option_index)) != -1) {
         switch (opt) {
             case 's': server = optarg; break;
             case 'P': port = atoi(optarg); break;
@@ -129,12 +139,26 @@ int main(int argc, char *argv[]) {
             case 't': to = optarg; break;
             case 'S': subject = optarg; break;
             case 'b': body = optarg; break;
-            case 'h':
-                print_help(argv[0]);
-                return 0;
-            default:
-                print_help(argv[0]);
-                return 1;
+            case 'p': secret_file = optarg; break; // Сохраняем путь к файлу
+            case 'h': print_help(argv[0]); return 0;
+            default: print_help(argv[0]); return 1;
+        }
+    }
+
+    if (secret_file) {
+        /* 1. Priority:  from file */ 
+        if (!read_password_from_file(secret_file, password, sizeof(password))) {
+            fprintf(stderr, "Failed to read password from file: %s\n", secret_file);
+            return 1;
+        }
+    } else {
+        /* 2. Fallback: Environment variable (old method) */ 
+        char *env_pass = getenv("SMTP_PASS");
+        if (env_pass) {
+            strncpy(password, env_pass, sizeof(password) - 1);
+        } else {
+            fprintf(stderr, "Error: Password not provided. Use --secret <file> or set SMTP_PASS env var.\n");
+            return 1;
         }
     }
 
@@ -191,7 +215,8 @@ int main(int argc, char *argv[]) {
     send_cmd(ssl, "AUTH LOGIN\r\n");
 
     char *b64_user = base64_encode((unsigned char*)user, strlen(user));
-    char *b64_pass = base64_encode((unsigned char*)pass, strlen(pass));
+    char *b64_pass = base64_encode((unsigned char*)password, strlen(password));
+    memset(password, 0, sizeof(password)); 
     char auth_buf[BUF_SIZE];
 
     snprintf(auth_buf, sizeof(auth_buf), "%s\r\n", b64_user);
