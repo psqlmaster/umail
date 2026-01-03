@@ -13,7 +13,7 @@ A lightweight, dependency-free SMTP client written in C. Designed for minimal Li
 ##### Build
 ```sh
 git clone https://github.com/psqlmaster/umail.git && cd umail && \
-gcc -g -O0 -o umail umail.c -lssl -lcrypto && ./umail -h
+gcc -Os -o umail umail.c -lssl -lcrypto && strip umail && ./umail -h
 ```
 
 ##### Quick Start

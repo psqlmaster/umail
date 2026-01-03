@@ -115,9 +115,9 @@ int main(int argc, char *argv[]) {
     char *secret_file = NULL;
     int use_mono = 0;
     
-    // Буфер для пароля
     char password[256]; 
-    memset(password, 0, sizeof(password));
+    //memset(password, 0, sizeof(password));
+    OPENSSL_cleanse(password, sizeof(password));
 
     struct option long_options[] = {
         {"server",  required_argument, 0, 's'},
@@ -132,7 +132,6 @@ int main(int argc, char *argv[]) {
         {0, 0, 0, 0}
     };
 
-    // Исправление: добавлена 'M' в строку аргументов "s:P:u:t:S:b:p:hM"
     while ((opt = getopt_long(argc, argv, "s:P:u:t:S:b:p:hM", long_options, &option_index)) != -1) {
         switch (opt) {
             case 's': server = optarg; break;
@@ -148,7 +147,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Логика получения пароля
     if (secret_file) {
         /* 1. Priority: from file */ 
         if (!read_password_from_file(secret_file, password, sizeof(password))) {
@@ -166,16 +164,14 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Проверка аргументов
     if (!server || !user || !to) {
         fprintf(stderr, "Error: Missing required arguments.\n");
         fprintf(stderr, "Use -h or --help for info.\n");
         return 1;
     }
 
-    // --- УДАЛЕН БЛОК ПОВТОРНОЙ ПРОВЕРКИ getenv("SMTP_PASS") ---
 
-    // Инициализация SSL
+    /* init SSL */
     SSL_library_init();
     OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
@@ -217,11 +213,9 @@ int main(int argc, char *argv[]) {
     send_cmd(ssl, "AUTH LOGIN\r\n");
 
     char *b64_user = base64_encode((unsigned char*)user, strlen(user));
-    // Используем переменную password, которую мы заполнили выше (из файла или ENV)
     char *b64_pass = base64_encode((unsigned char*)password, strlen(password));
     
-    // Очистка пароля в памяти (Security)
-    memset(password, 0, sizeof(password)); 
+    OPENSSL_cleanse(password, sizeof(password));  
     
     char auth_buf[BUF_SIZE];
 
