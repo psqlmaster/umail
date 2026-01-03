@@ -1,0 +1,15 @@
+BSD 3-Clause License
+
+Copyright (c) 2026, Alexander Shcheglov @sqlmaster
+All rights reserved.
+
+This license permits the use, modification, and distribution of this software under the following conditions:
+
+1. Redistribution conditions: 
+   - All copies or substantial portions of this software must include the above copyright notice and this license notice.
+
+2. Advertising conditions: 
+   - Neither the name of the authors nor the names of the contributors may be used to promote or advertise derived works without prior written permission.
+
+3. Disclaimer: 
+   - This software is provided "as is", without any warranty of any kind, express or implied, including but not limited to the implied warranties of merchantability and fitness for a particular purpose. In no event shall the authors or copyright holders be liable for any claims, damages, or other liabilities, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection with the software or the use or other dealings in the software.
