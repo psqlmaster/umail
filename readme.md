@@ -37,6 +37,7 @@ lsblk -f | ./umail \
   --to to_address@gmail.com \
   --secret /var/tmp/.umail/.umail \
   --subject "Secure Run"
+  --mono
 ```
 
 ##### Options
@@ -51,5 +52,6 @@ Usage: ./umail [OPTIONS]
   -S, --subject <text>   Email subject
   -b, --body <text>      Email body. If omitted, reads from STDIN.
   -p, --secret <file>    Path to file containing password
+  -M, --mono             Send as HTML Monospace (great for logs/tables)
   -h, --help             Show help message
 ```

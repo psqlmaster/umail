@@ -76,6 +76,7 @@ void print_help(const char *prog_name) {
     printf("  -t, --to <email>       Recipient email (TO)\n");
     printf("  -S, --subject <text>   Email subject\n");
     printf("  -b, --body <text>      Email body (optional). If omitted, reads from STDIN\n");
+    printf("  -M, --mono             Send as HTML Monospace (great for logs/tables)\n");
     printf("  -h, --help             Show this help message and exit\n\n");
     printf("Environment Variables:\n");
     printf("  SMTP_PASS              Password or App Password (REQUIRED)\n\n");
@@ -111,11 +112,10 @@ int main(int argc, char *argv[]) {
     char *to = NULL;
     char *subject = "No Subject";
     char *body = NULL;
-    
-    // Новая переменная для пути к файлу
     char *secret_file = NULL;
+    int use_mono = 0;
     
-    // Буфер для пароля в памяти
+    // Буфер для пароля
     char password[256]; 
     memset(password, 0, sizeof(password));
 
@@ -126,12 +126,14 @@ int main(int argc, char *argv[]) {
         {"to",      required_argument, 0, 't'},
         {"subject", required_argument, 0, 'S'},
         {"body",    required_argument, 0, 'b'},
-        {"secret",  required_argument, 0, 'p'}, // Новый ключ -p / --secret
+        {"secret",  required_argument, 0, 'p'},
+        {"mono",    no_argument,       0, 'M'}, 
         {"help",    no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "s:P:u:t:S:b:p:h", long_options, &option_index)) != -1) {
+    // Исправление: добавлена 'M' в строку аргументов "s:P:u:t:S:b:p:hM"
+    while ((opt = getopt_long(argc, argv, "s:P:u:t:S:b:p:hM", long_options, &option_index)) != -1) {
         switch (opt) {
             case 's': server = optarg; break;
             case 'P': port = atoi(optarg); break;
@@ -139,20 +141,22 @@ int main(int argc, char *argv[]) {
             case 't': to = optarg; break;
             case 'S': subject = optarg; break;
             case 'b': body = optarg; break;
-            case 'p': secret_file = optarg; break; // Сохраняем путь к файлу
+            case 'p': secret_file = optarg; break;
+            case 'M': use_mono = 1; break;
             case 'h': print_help(argv[0]); return 0;
             default: print_help(argv[0]); return 1;
         }
     }
 
+    // Логика получения пароля
     if (secret_file) {
-        /* 1. Priority:  from file */ 
+        /* 1. Priority: from file */ 
         if (!read_password_from_file(secret_file, password, sizeof(password))) {
             fprintf(stderr, "Failed to read password from file: %s\n", secret_file);
             return 1;
         }
     } else {
-        /* 2. Fallback: Environment variable (old method) */ 
+        /* 2. Fallback: Environment variable */ 
         char *env_pass = getenv("SMTP_PASS");
         if (env_pass) {
             strncpy(password, env_pass, sizeof(password) - 1);
@@ -162,18 +166,16 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Проверка аргументов
     if (!server || !user || !to) {
         fprintf(stderr, "Error: Missing required arguments.\n");
         fprintf(stderr, "Use -h or --help for info.\n");
         return 1;
     }
 
-    char *pass = getenv("SMTP_PASS");
-    if (pass == NULL) {
-        fprintf(stderr, "Error: SMTP_PASS environment variable is not set.\n");
-        return 1;
-    }
+    // --- УДАЛЕН БЛОК ПОВТОРНОЙ ПРОВЕРКИ getenv("SMTP_PASS") ---
 
+    // Инициализация SSL
     SSL_library_init();
     OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
@@ -215,8 +217,12 @@ int main(int argc, char *argv[]) {
     send_cmd(ssl, "AUTH LOGIN\r\n");
 
     char *b64_user = base64_encode((unsigned char*)user, strlen(user));
+    // Используем переменную password, которую мы заполнили выше (из файла или ENV)
     char *b64_pass = base64_encode((unsigned char*)password, strlen(password));
+    
+    // Очистка пароля в памяти (Security)
     memset(password, 0, sizeof(password)); 
+    
     char auth_buf[BUF_SIZE];
 
     snprintf(auth_buf, sizeof(auth_buf), "%s\r\n", b64_user);
@@ -237,20 +243,37 @@ int main(int argc, char *argv[]) {
 
     send_cmd(ssl, "DATA\r\n");
 
-    /* Headers */
     snprintf(cmd_buf, sizeof(cmd_buf), 
-        "Subject: %s\r\nFrom: %s <%s>\r\nTo: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n", 
-        subject, "System Alert", user, to);
+        "Subject: %s\r\nFrom: %s <%s>\r\nTo: %s\r\n"
+        "MIME-Version: 1.0\r\n"
+        "Content-Type: %s; charset=UTF-8\r\n\r\n", 
+        subject, "System Alert", user, to,
+        use_mono ? "text/html" : "text/plain"
+    );
     SSL_write(ssl, cmd_buf, strlen(cmd_buf));
 
-    /* Body */
+    if (use_mono) {
+        const char *html_start = 
+            "<div style='background-color:#f5f5f5; padding:10px; border-radius:5px;'>"
+            "<pre style='font-family: Consolas, monospace; font-size: 14px; color: #333;'>";
+        SSL_write(ssl, html_start, strlen(html_start));
+    }
+
     if (body) {
         SSL_write(ssl, body, strlen(body));
     } else {
+        if (isatty(fileno(stdin))) {
+            printf("Reading body from STDIN. Type message, Ctrl+D to send.\n");
+        }
         char read_buf[1024];
         while(fgets(read_buf, sizeof(read_buf), stdin) != NULL) {
             SSL_write(ssl, read_buf, strlen(read_buf));
         }
+    }
+
+    if (use_mono) {
+        const char *html_end = "</pre></div>";
+        SSL_write(ssl, html_end, strlen(html_end));
     }
 
     send_cmd(ssl, "\r\n.\r\n");
