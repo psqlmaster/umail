@@ -7,3 +7,7 @@
 - Stealthy: Supports reading credentials from protected files to avoid process listing leaks.
 
 - Pipeline friendly: Easy integration with cron, bash, and backup scripts.
+
+```sh
+gcc -o umail umail.c -lssl -lcrypto
+```
