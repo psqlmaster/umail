@@ -1,3 +1,4 @@
+![_](logo.png)
 #### 🛡️ umail: Secure Micro SMTP Client
 
 A lightweight, dependency-free SMTP client written in C. Designed for minimal Linux servers, embedded systems, and secure environments where installing full MTAs (like Postfix or Sendmail) is not possible.
