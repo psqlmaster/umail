@@ -8,6 +8,7 @@
 #include <netdb.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <time.h>
 
 #define BUF_SIZE 4096
 
@@ -27,7 +28,7 @@ char *base64_encode(const unsigned char *data, size_t input_length) {
     char *encoded_data = malloc(output_length + 1);
     if (encoded_data == NULL) return NULL;
 
-    for (int i = 0, j = 0; i < input_length;) {
+    for (size_t i = 0, j = 0; i < input_length;) {
         uint32_t octet_a = i < input_length ? (unsigned char)data[i++] : 0;
         uint32_t octet_b = i < input_length ? (unsigned char)data[i++] : 0;
         uint32_t octet_c = i < input_length ? (unsigned char)data[i++] : 0;
@@ -43,6 +44,16 @@ char *base64_encode(const unsigned char *data, size_t input_length) {
     return encoded_data;
 }
 
+/* --- Helper to get filename from path --- */
+const char *get_filename(const char *path) {
+    const char *filename = strrchr(path, '/');
+    if (filename == NULL)
+        filename = path;
+    else
+        filename++;
+    return filename;
+}
+
 /* --- Network Helpers --- */
 void read_response(SSL *ssl) {
     char buffer[BUF_SIZE];
@@ -56,7 +67,7 @@ void read_response(SSL *ssl) {
 }
 
 void send_cmd(SSL *ssl, const char *cmd) {
-    if (strncmp(cmd, "AUTH", 4) == 0 || strlen(cmd) > 50) { 
+    if (strncmp(cmd, "AUTH", 4) == 0 || strlen(cmd) > 100) { 
         printf("\033[0;32mCLIENT:\033[0m AUTH/DATA ...\n"); 
     } else {
         printf("\033[0;32mCLIENT:\033[0m %s", cmd);
@@ -76,13 +87,14 @@ void print_help(const char *prog_name) {
     printf("  -t, --to <email>       Recipient email (TO)\n");
     printf("  -S, --subject <text>   Email subject\n");
     printf("  -b, --body <text>      Email body (optional). If omitted, reads from STDIN\n");
+    printf("  -a, --attach <file>    File attachment path\n");
     printf("  -M, --mono             Send as HTML Monospace (great for logs/tables)\n");
+    printf("  -p, --secret <file>    File containing password\n");
     printf("  -h, --help             Show this help message and exit\n\n");
     printf("Environment Variables:\n");
     printf("  SMTP_PASS              Password or App Password (REQUIRED)\n\n");
     printf("Example:\n");
-    printf("  export SMTP_PASS='secret'\n");
-    printf("  %s -s smtp.gmail.com -u me@gmail.com -t admin@corp.com -S 'Alert' -b 'Error!'\n", prog_name);
+    printf("  %s -s smtp.gmail.com -u me@gmail.com -t user@corp.com -S 'Log' -a ./log.txt\n", prog_name);
 }
 
 int read_password_from_file(const char *filename, char *buffer, size_t size) {
@@ -112,11 +124,11 @@ int main(int argc, char *argv[]) {
     char *to = NULL;
     char *subject = "No Subject";
     char *body = NULL;
+    char *attachment_path = NULL;
     char *secret_file = NULL;
     int use_mono = 0;
     
     char password[256]; 
-    //memset(password, 0, sizeof(password));
     OPENSSL_cleanse(password, sizeof(password));
 
     struct option long_options[] = {
@@ -126,13 +138,14 @@ int main(int argc, char *argv[]) {
         {"to",      required_argument, 0, 't'},
         {"subject", required_argument, 0, 'S'},
         {"body",    required_argument, 0, 'b'},
+        {"attach",  required_argument, 0, 'a'},
         {"secret",  required_argument, 0, 'p'},
         {"mono",    no_argument,       0, 'M'}, 
         {"help",    no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "s:P:u:t:S:b:p:hM", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:P:u:t:S:b:a:p:hM", long_options, &option_index)) != -1) {
         switch (opt) {
             case 's': server = optarg; break;
             case 'P': port = atoi(optarg); break;
@@ -140,6 +153,7 @@ int main(int argc, char *argv[]) {
             case 't': to = optarg; break;
             case 'S': subject = optarg; break;
             case 'b': body = optarg; break;
+            case 'a': attachment_path = optarg; break;
             case 'p': secret_file = optarg; break;
             case 'M': use_mono = 1; break;
             case 'h': print_help(argv[0]); return 0;
@@ -147,19 +161,33 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Check attachment existence before connecting
+    long file_size = 0;
+    FILE *att_fp = NULL;
+    if (attachment_path) {
+        att_fp = fopen(attachment_path, "rb");
+        if (!att_fp) {
+            fprintf(stderr, "Error: Cannot open attachment file: %s\n", attachment_path);
+            return 1;
+        }
+        fseek(att_fp, 0, SEEK_END);
+        file_size = ftell(att_fp);
+        fseek(att_fp, 0, SEEK_SET);
+    }
+
     if (secret_file) {
-        /* 1. Priority: from file */ 
         if (!read_password_from_file(secret_file, password, sizeof(password))) {
             fprintf(stderr, "Failed to read password from file: %s\n", secret_file);
+            if(att_fp) fclose(att_fp);
             return 1;
         }
     } else {
-        /* 2. Fallback: Environment variable */ 
         char *env_pass = getenv("SMTP_PASS");
         if (env_pass) {
             strncpy(password, env_pass, sizeof(password) - 1);
         } else {
             fprintf(stderr, "Error: Password not provided. Use --secret <file> or set SMTP_PASS env var.\n");
+            if(att_fp) fclose(att_fp);
             return 1;
         }
     }
@@ -167,9 +195,9 @@ int main(int argc, char *argv[]) {
     if (!server || !user || !to) {
         fprintf(stderr, "Error: Missing required arguments.\n");
         fprintf(stderr, "Use -h or --help for info.\n");
+        if(att_fp) fclose(att_fp);
         return 1;
     }
-
 
     /* init SSL */
     SSL_library_init();
@@ -177,12 +205,13 @@ int main(int argc, char *argv[]) {
     SSL_load_error_strings();
     const SSL_METHOD *method = TLS_client_method();
     SSL_CTX *ctx = SSL_CTX_new(method);
-    if (!ctx) { ERR_print_errors_fp(stderr); return 1; }
+    if (!ctx) { ERR_print_errors_fp(stderr); if(att_fp) fclose(att_fp); return 1; }
 
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     struct hostent *host = gethostbyname(server);
     if (!host) {
         fprintf(stderr, "Error: Cannot resolve hostname %s\n", server);
+        if(att_fp) fclose(att_fp);
         return 1;
     }
 
@@ -195,6 +224,7 @@ int main(int argc, char *argv[]) {
     printf("Connecting to %s:%d...\n", server, port);
     if (connect(sock, (struct sockaddr *)&addr, sizeof(struct sockaddr)) != 0) {
         perror("Unable to connect");
+        if(att_fp) fclose(att_fp);
         return 1;
     }
 
@@ -203,6 +233,7 @@ int main(int argc, char *argv[]) {
     SSL_set_fd(ssl, sock);
     if (SSL_connect(ssl) <= 0) {
         ERR_print_errors_fp(stderr);
+        if(att_fp) fclose(att_fp);
         return 1;
     }
 
@@ -218,7 +249,6 @@ int main(int argc, char *argv[]) {
     OPENSSL_cleanse(password, sizeof(password));  
     
     char auth_buf[BUF_SIZE];
-
     snprintf(auth_buf, sizeof(auth_buf), "%s\r\n", b64_user);
     send_cmd(ssl, auth_buf);
 
@@ -237,15 +267,42 @@ int main(int argc, char *argv[]) {
 
     send_cmd(ssl, "DATA\r\n");
 
-    snprintf(cmd_buf, sizeof(cmd_buf), 
-        "Subject: %s\r\nFrom: %s <%s>\r\nTo: %s\r\n"
-        "MIME-Version: 1.0\r\n"
-        "Content-Type: %s; charset=UTF-8\r\n\r\n", 
-        subject, "System Alert", user, to,
-        use_mono ? "text/html" : "text/plain"
-    );
-    SSL_write(ssl, cmd_buf, strlen(cmd_buf));
+    /* --- Sending MIME Headers --- */
+    char boundary[64];
+    snprintf(boundary, sizeof(boundary), "----_=_NextPart_%lx_%lx", (long)time(NULL), (long)getpid());
 
+    if (attachment_path) {
+        /* Multipart Header */
+        snprintf(cmd_buf, sizeof(cmd_buf), 
+            "Subject: %s\r\n"
+            "From: %s <%s>\r\n"
+            "To: %s\r\n"
+            "MIME-Version: 1.0\r\n"
+            "Content-Type: multipart/mixed; boundary=\"%s\"\r\n\r\n", 
+            subject, "System Alert", user, to, boundary
+        );
+        SSL_write(ssl, cmd_buf, strlen(cmd_buf));
+
+        /* Part 1: Body */
+        snprintf(cmd_buf, sizeof(cmd_buf), 
+            "--%s\r\n"
+            "Content-Type: %s; charset=UTF-8\r\n\r\n", 
+            boundary, use_mono ? "text/html" : "text/plain"
+        );
+        SSL_write(ssl, cmd_buf, strlen(cmd_buf));
+    } else {
+        /* Simple Header (Legacy) */
+        snprintf(cmd_buf, sizeof(cmd_buf), 
+            "Subject: %s\r\nFrom: %s <%s>\r\nTo: %s\r\n"
+            "MIME-Version: 1.0\r\n"
+            "Content-Type: %s; charset=UTF-8\r\n\r\n", 
+            subject, "System Alert", user, to,
+            use_mono ? "text/html" : "text/plain"
+        );
+        SSL_write(ssl, cmd_buf, strlen(cmd_buf));
+    }
+
+    /* Write Body Content */
     if (use_mono) {
         const char *html_start = 
             "<div style='background-color:#f5f5f5; padding:10px; border-radius:5px;'>"
@@ -268,6 +325,45 @@ int main(int argc, char *argv[]) {
     if (use_mono) {
         const char *html_end = "</pre></div>";
         SSL_write(ssl, html_end, strlen(html_end));
+    }
+
+    /* Part 2: Attachment */
+    if (attachment_path && att_fp) {
+        SSL_write(ssl, "\r\n", 2); 
+        
+        snprintf(cmd_buf, sizeof(cmd_buf), 
+            "--%s\r\n"
+            "Content-Type: application/octet-stream; name=\"%s\"\r\n"
+            "Content-Disposition: attachment; filename=\"%s\"\r\n"
+            "Content-Transfer-Encoding: base64\r\n\r\n",
+            boundary, get_filename(attachment_path), get_filename(attachment_path)
+        );
+        SSL_write(ssl, cmd_buf, strlen(cmd_buf));
+
+        /* Read file, encode and send in chunks */
+        unsigned char *file_content = malloc(file_size);
+        if (file_content) {
+            if (fread(file_content, 1, file_size, att_fp) == file_size) {
+                char *b64_file = base64_encode(file_content, file_size);
+                if (b64_file) {
+                    size_t b64_len = strlen(b64_file);
+                    size_t chunk_size = 72; // MIME max line length
+                    for (size_t i = 0; i < b64_len; i += chunk_size) {
+                        size_t remaining = b64_len - i;
+                        size_t to_write = (remaining < chunk_size) ? remaining : chunk_size;
+                        SSL_write(ssl, b64_file + i, to_write);
+                        SSL_write(ssl, "\r\n", 2);
+                    }
+                    free(b64_file);
+                }
+            }
+            free(file_content);
+        }
+        fclose(att_fp);
+
+        /* Closing Boundary */
+        snprintf(cmd_buf, sizeof(cmd_buf), "--%s--\r\n", boundary);
+        SSL_write(ssl, cmd_buf, strlen(cmd_buf));
     }
 
     send_cmd(ssl, "\r\n.\r\n");
