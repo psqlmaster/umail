@@ -115,8 +115,9 @@ int read_password_from_file(const char *filename, char *buffer, size_t size) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc == 1) {
-        print_help(argv[0]);
+    if (argc <= 1) {
+        const char *prog_name = (argc > 0 && argv[0]) ? argv[0] : "umail";
+        print_help(prog_name);
         return 1;
     }
 
