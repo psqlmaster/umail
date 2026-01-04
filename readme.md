@@ -1,15 +1,16 @@
 ![_](logo.png)
-#### 🛡️ umail: Secure Micro SMTP Client
+#### ✉️ umail: Secure Micro SMTP Client
 
 A lightweight, dependency-free SMTP client written in C. Designed for minimal Linux servers, embedded systems, and secure environments where installing full MTAs (like Postfix or Sendmail) is not possible.
 
 ##### Key Features
 - **Single binary:** No external dependencies (except libssl).
-- **Secure:** Support for SMTPS (port 465) and secure authentication.
+- **Secure:** Supports both **SMTPS** (Implicit SSL, port 465) and **STARTTLS** (port 587).
+- **Reliable:** Built-in network timeouts (15s) prevent hanging processes in cron jobs.
 - **Attachments:** Support for sending files (MIME Multipart) alongside text/HTML bodies.
+- **Debug Friendly:** Detailed verbose mode (`-v`) to trace SMTP conversations and SSL handshakes.
 - **Memory Safe:** Passwords are scrubbed from memory immediately after use.
 - **Stealthy:** Supports reading credentials from protected files or environment variables.
-- **Pipeline friendly:** Easy integration with cron, bash, and backup scripts.
 
 ##### Build
 ```sh
@@ -35,8 +36,8 @@ chmod 600 /var/tmp/.umail/.umail
 export SMTP_PASS="your_password_app"
 ```
 
-**2. Send message from pipe**
-Execute a command and send its output directly to email using a secret file.
+**2. Send message from pipe (SMTPS / 465)**
+Execute a command and send its output directly to email.
 
 ```sh
 lsblk -f | ./umail \
@@ -45,7 +46,8 @@ lsblk -f | ./umail \
   --to to_address@gmail.com \
   --secret /var/tmp/.umail/.umail \
   --subject "Secure Run" \
-  --mono
+  --mono \
+  --verbose
 ```
 
 **3. Send file with attachment**
@@ -62,13 +64,27 @@ export SMTP_PASS="secret_password"
   -a "/var/log/syslog"
 ```
 
+**4. Use STARTTLS (Port 587)**
+Example for Microsoft Exchange / Office365 or legacy Postfix servers.
+*Note: The program automatically detects port 587 and switches protocol.*
+
+```sh
+./umail \
+  --server smtp.office365.com \
+  --port 587 \
+  --user me@corp.com \
+  --to boss@corp.com \
+  --subject "Report" \
+  --secret /path/to/pass
+```
+
 ##### Options
 
 ```text
 Usage: ./umail [OPTIONS]
 
   -s, --server <host>    SMTP server address (e.g., smtp.gmail.com)
-  -P, --port <port>      SMTP port (default: 465)
+  -P, --port <port>      SMTP port (465 for Implicit SSL, 587 for STARTTLS)
   -u, --user <email>     User email / Login (FROM)
   -t, --to <email>       Recipient email (TO)
   -S, --subject <text>   Email subject
@@ -76,6 +92,7 @@ Usage: ./umail [OPTIONS]
   -a, --attach <file>    File attachment path
   -p, --secret <file>    Path to file containing password
   -M, --mono             Send as HTML Monospace (great for logs/tables)
+  -v, --verbose          Enable verbose debug output
   -h, --help             Show help message
 
 Environment Variables:
