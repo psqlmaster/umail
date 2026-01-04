@@ -98,3 +98,54 @@ Usage: ./umail [OPTIONS]
 Environment Variables:
   SMTP_PASS              Password or App Password (used if -p is omitted)
 ```
+
+##### Example send mail: "Full Server Report"
+
+```sh
+(
+  echo "=== SERVER UPTIME ==="
+  uptime
+  echo ""
+  echo "=== DISK USAGE ==="
+  df -h
+  echo ""
+  echo "=== MEMORY ==="
+  free -h
+) | ./umail \
+  --server smtp.gmail.com \
+  --user from_address@gmail.com \
+  --to to_address@gmail.com \
+  --secret /var/tmp/.umail/.umail \
+  --subject "Full Server Report" \
+  --mono
+```  
+
+***mail body***
+```text
+=== SERVER UPTIME ===
+ 21:42:00 up  8:59,  1 user,  load average: 3.92, 3.75, 3.74
+
+=== DISK USAGE ===
+Filesystem      Size  Used Avail Use% Mounted on
+udev             16G     0   16G   0% /dev
+tmpfs           3.2G  1.9M  3.2G   1% /run
+efivarfs        128K   64K   60K  52% /sys/firmware/efi/efivars
+/dev/md0        193G  107G   77G  59% /
+tmpfs            16G   49M   16G   1% /dev/shm
+none            1.0M     0  1.0M   0% /run/credentials/systemd-journald.service
+none            1.0M     0  1.0M   0% /run/credentials/systemd-resolved.service
+tmpfs            16G   24M   16G   1% /tmp
+/dev/nvme1n1p3  274G  217G   44G  84% /mnt/backup
+/dev/nvme0n1p4  247G   68G  167G  29% /mnt/new_free
+/dev/nvme1n1p2  511M   50M  462M  10% /boot/efi
+/dev/sda1       916G  509G  363G  59% /mnt/share
+s3fs             64P     0   64P   0% /mnt/s3_nata
+s3fs             64P     0   64P   0% /mnt/s3
+none            1.0M     0  1.0M   0% /run/credentials/getty@tty1.service
+tmpfs           3.2G  4.1M  3.2G   1% /run/user/1001
+
+=== MEMORY ===
+               total        used        free      shared  buff/cache   available
+Mem:            31Gi        20Gi       1.4Gi       209Mi         9Gi        10Gi
+Swap:           27Gi          0B        27Gi
+```
