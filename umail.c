@@ -115,6 +115,11 @@ int read_password_from_file(const char *filename, char *buffer, size_t size) {
 }
 
 int main(int argc, char *argv[]) {
+    if (argc == 1) {
+        print_help(argv[0]);
+        return 1;
+    }
+
     int opt;
     int option_index = 0;
 
@@ -157,7 +162,10 @@ int main(int argc, char *argv[]) {
             case 'p': secret_file = optarg; break;
             case 'M': use_mono = 1; break;
             case 'h': print_help(argv[0]); return 0;
-            default: print_help(argv[0]); return 1;
+            case '?':
+            default: 
+                print_help(argv[0]); 
+                return 1;
         }
     }
 
