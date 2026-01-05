@@ -7,7 +7,7 @@ A lightweight, dependency-free SMTP client written in C. Designed for minimal Li
 - **Single binary:** No external dependencies (except libssl).
 - **Secure:** Supports both **SMTPS** (Implicit SSL, port 465) and **STARTTLS** (port 587).
 - **Reliable:** Built-in network timeouts (15s) prevent hanging processes in cron jobs.
-- **Attachments:** Support for sending files (MIME Multipart) alongside text/HTML bodies.
+- **Attachments:** Support for sending files (can be used multiple times) alongside text/HTML bodies.
 - **Debug Friendly:** Detailed verbose mode (`-v`) to trace SMTP conversations and SSL handshakes.
 - **Memory Safe:** Passwords are scrubbed from memory immediately after use.
 - **Stealthy:** Supports reading credentials from protected files or environment variables.
@@ -61,7 +61,8 @@ export SMTP_PASS="secret_password"
   -t to@corp.com \
   -S "Daily Log" \
   -b "Please check the attached log file." \
-  -a "/var/log/syslog"
+  -a "/var/log/syslog" \
+  -a "/var/log/syslog.1" 
 ```
 
 **4. Use STARTTLS (Port 587)**
@@ -89,7 +90,7 @@ Usage: ./umail [OPTIONS]
   -t, --to <email>       Recipient email (TO)
   -S, --subject <text>   Email subject
   -b, --body <text>      Email body. If omitted, reads from STDIN.
-  -a, --attach <file>    File attachment path
+  -a, --attach <file>    File attachment path (can be used multiple times) 
   -p, --secret <file>    Path to file containing password
   -M, --mono             Send as HTML Monospace (great for logs/tables)
   -v, --verbose          Enable verbose debug output
