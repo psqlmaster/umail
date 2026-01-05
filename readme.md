@@ -14,7 +14,7 @@ A lightweight, dependency-free SMTP client written in C. Designed for minimal Li
 
 ##### Build
 ```sh
-git clone https://github.com/psqlmaster/umail.git && cd umail && \
+git clone --depth 1 https://github.com/psqlmaster/umail.git && cd umail && \
 gcc -Os -o umail umail.c -lssl -lcrypto && strip umail && ./umail -h
 ```
 
