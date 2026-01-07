@@ -7,6 +7,7 @@ A lightweight, dependency-free SMTP client written in C. Designed for minimal Li
 - **Single binary:** No external dependencies (except libssl).
 - **Secure:** Supports both **SMTPS** (Implicit SSL, port 465) and **STARTTLS** (port 587).
 - **Reliable:** Built-in network timeouts (15s) prevent hanging processes in cron jobs.
+- **Resilient:** Automatically retries sending 3 times (with 5s delay) in case of network or server failures.
 - **Attachments:** Support for sending files (can be used multiple times) alongside text/HTML bodies.
 - **Mass Mailing:** Support for multiple recipients (multiple `-t` flags).
 - **Debug Friendly:** Detailed verbose mode (`-v`) to trace SMTP conversations and SSL handshakes.
@@ -88,10 +89,10 @@ Usage: ./umail [OPTIONS]
   -s, --server <host>    SMTP server address (e.g., smtp.gmail.com)
   -P, --port <port>      SMTP port (465 for Implicit SSL, 587 for STARTTLS)
   -u, --user <email>     User email / Login (FROM)
-  -t, --to <email>       Recipient email (can be used multiple times)
+  -t, --to <email>       Recipient email (can be used multiple times, example: -t user1@ya.ru -t user2@gmail.com)
   -S, --subject <text>   Email subject
   -b, --body <text>      Email body. If omitted, reads from STDIN.
-  -a, --attach <file>    File attachment path (can be used multiple times) 
+  -a, --attach <file>    File attachment path (can be used multiple times, example: -a file1 -a file2) 
   -p, --secret <file>    Path to file containing password
   -M, --mono             Send as HTML Monospace (great for logs/tables)
   -v, --verbose          Enable verbose debug output
