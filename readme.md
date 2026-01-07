@@ -89,10 +89,12 @@ Usage: ./umail [OPTIONS]
   -s, --server <host>    SMTP server address (e.g., smtp.gmail.com)
   -P, --port <port>      SMTP port (465 for Implicit SSL, 587 for STARTTLS)
   -u, --user <email>     User email / Login (FROM)
-  -t, --to <email>       Recipient email (can be used multiple times, example: -t user1@ya.ru -t user2@gmail.com)
+  -t, --to <email>       Recipient email. Multiple allowed, example: -t user1@ya.ru -t user2@gmail.com
+  -c, --cc <email>       Carbon Copy (cc). Multiple allowed.
+  --bcc <email>          Blind Carbon Copy (bcc). Multiple allowed.
   -S, --subject <text>   Email subject
   -b, --body <text>      Email body. If omitted, reads from STDIN.
-  -a, --attach <file>    File attachment path (can be used multiple times, example: -a file1 -a file2) 
+  -a, --attach <file>    File attachment path. Multiple allowed.
   -p, --secret <file>    Path to file containing password
   -M, --mono             Send as HTML Monospace (great for logs/tables)
   -v, --verbose          Enable verbose debug output

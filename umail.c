@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <sys/time.h> 
 #include <netinet/in.h>
+#include <arpa/inet.h> /* Added for inet_ntop */
 #include <netdb.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -42,8 +43,10 @@ typedef struct {
     int port;
     char *user;
     char *password;
-    ListNode *rcpt_head;
-    ListNode *att_head;
+    ListNode *rcpt_head; /* To */
+    ListNode *cc_head;   /* Cc */
+    ListNode *bcc_head;  /* Bcc */
+    ListNode *att_head;  /* Attachments */
     char *subject;
     char *body;
     int use_mono;
@@ -150,12 +153,43 @@ int raw_read_response(int sock) {
     return 0;
 }
 
+/* Helper to iterate lists and send RCPT TO */
+int send_rcpt_list(SSL *ssl, ListNode *head) {
+    char cmd_buf[BUF_SIZE];
+    ListNode *curr = head;
+    while (curr) {
+        snprintf(cmd_buf, sizeof(cmd_buf), "RCPT TO: <%s>\r\n", curr->value);
+        if (!send_cmd(ssl, cmd_buf)) return 0;
+        curr = curr->next;
+    }
+    return 1;
+}
+
+/* Helper to build header string (e.g. "To: a, b, c") */
+void build_address_header(char *buffer, size_t size, const char *prefix, ListNode *head) {
+    if (!head) {
+        buffer[0] = '\0';
+        return;
+    }
+    snprintf(buffer, size, "%s", prefix);
+    ListNode *curr = head;
+    while (curr) {
+        if (strlen(buffer) + strlen(curr->value) + 5 < size) {
+            strcat(buffer, curr->value);
+            if (curr->next) strcat(buffer, ", ");
+        }
+        curr = curr->next;
+    }
+}
+
 /* --- Core Sending Function --- */
+/* Returns 0 on Success, 1 on Error */
 int send_email_attempt(EmailConfig *cfg) {
     int sock = -1;
     SSL_CTX *ctx = NULL;
     SSL *ssl = NULL;
-    int ret_code = 1; /* Default to error */
+    int ret_code = 1; // Default to error
+    struct addrinfo hints, *res = NULL, *p = NULL;
 
     /* 1. Init SSL */
     SSL_library_init();
@@ -165,30 +199,57 @@ int send_email_attempt(EmailConfig *cfg) {
     ctx = SSL_CTX_new(method);
     if (!ctx) return 1;
 
-    /* 2. Resolve & Connect */
-    struct hostent *host = gethostbyname(cfg->server);
-    if (!host) {
+    /* 2. Resolve (IPv4/IPv6) & Connect */
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;     /* Allow IPv4 or IPv6 */
+    hints.ai_socktype = SOCK_STREAM;
+    
+    char port_str[6];
+    snprintf(port_str, sizeof(port_str), "%d", cfg->port);
+
+    LOG_I("Resolving %s...\n", cfg->server);
+    if (getaddrinfo(cfg->server, port_str, &hints, &res) != 0) {
         LOG_ERR("Cannot resolve hostname %s\n", cfg->server);
         goto cleanup;
     }
 
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) goto cleanup;
+    /* Loop through results and try to connect */
+    for (p = res; p != NULL; p = p->ai_next) {
+        sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (sock == -1) continue;
 
-    struct timeval timeout;
-    timeout.tv_sec = TIMEOUT_SEC; timeout.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+        /* Set Timeouts */
+        struct timeval timeout;
+        timeout.tv_sec = TIMEOUT_SEC; timeout.tv_usec = 0;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(cfg->port);
-    addr.sin_addr = *((struct in_addr *)host->h_addr);
-    memset(&(addr.sin_zero), 0, 8);
+        /* Logging IP */
+        char ipstr[INET6_ADDRSTRLEN];
+        void *addr;
+        if (p->ai_family == AF_INET) {
+            struct sockaddr_in *ipv4 = (struct sockaddr_in *)p->ai_addr;
+            addr = &(ipv4->sin_addr);
+        } else {
+            struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)p->ai_addr;
+            addr = &(ipv6->sin6_addr);
+        }
+        inet_ntop(p->ai_family, addr, ipstr, sizeof(ipstr));
+        LOG_I("Connecting to %s [%s]:%d...\n", cfg->server, ipstr, cfg->port);
 
-    LOG_I("Connecting to %s:%d...\n", cfg->server, cfg->port);
-    if (connect(sock, (struct sockaddr *)&addr, sizeof(struct sockaddr)) != 0) {
-        if (verbose) perror("Connection failed");
+        if (connect(sock, p->ai_addr, p->ai_addrlen) == 0) {
+            break; /* Success */
+        }
+        
+        if (verbose) perror("Connection attempt failed");
+        close(sock);
+        sock = -1;
+    }
+
+    if (res) freeaddrinfo(res);
+
+    if (sock == -1) {
+        LOG_ERR("Failed to connect to any address for %s\n", cfg->server);
         goto cleanup;
     }
 
@@ -238,44 +299,45 @@ int send_email_attempt(EmailConfig *cfg) {
     snprintf(cmd_buf, sizeof(cmd_buf), "MAIL FROM: <%s>\r\n", cfg->user);
     if (!send_cmd(ssl, cmd_buf)) goto cleanup;
 
-    ListNode *curr = cfg->rcpt_head;
-    while (curr) {
-        snprintf(cmd_buf, sizeof(cmd_buf), "RCPT TO: <%s>\r\n", curr->value);
-        if (!send_cmd(ssl, cmd_buf)) goto cleanup;
-        curr = curr->next;
-    }
+    /* SEND RCPT TO for ALL lists (To, Cc, Bcc) */
+    if (!send_rcpt_list(ssl, cfg->rcpt_head)) goto cleanup;
+    if (!send_rcpt_list(ssl, cfg->cc_head)) goto cleanup;
+    if (!send_rcpt_list(ssl, cfg->bcc_head)) goto cleanup;
 
     if (!send_cmd(ssl, "DATA\r\n")) goto cleanup;
 
     /* 5. Headers & Body */
+    
+    /* Headers Generation */
     char date_str[128];
     time_t now = time(NULL);
     struct tm *t = localtime(&now);
-    /* RFC 2822 Format: Wed, 07 Jan 2026 22:30:00 +0300 */
     strftime(date_str, sizeof(date_str), "%a, %d %b %Y %H:%M:%S %z", t);
 
     char boundary[64];
     snprintf(boundary, sizeof(boundary), "----_=_NextPart_%lx_%lx", (long)time(NULL), (long)getpid());
 
-    char to_header[BUF_SIZE] = "To: ";
-    curr = cfg->rcpt_head;
-    while (curr) {
-        if (strlen(to_header) + strlen(curr->value) + 5 < BUF_SIZE) {
-            strcat(to_header, curr->value);
-            if (curr->next) strcat(to_header, ", ");
-        }
-        curr = curr->next;
-    }
+    /* Build To: and Cc: strings */
+    char to_header[BUF_SIZE];
+    char cc_header[BUF_SIZE];
+    
+    build_address_header(to_header, BUF_SIZE, "To: ", cfg->rcpt_head);
+    build_address_header(cc_header, BUF_SIZE, "Cc: ", cfg->cc_head);
 
+    /* Construct Headers (BCC is NOT included here by definition) */
     snprintf(cmd_buf, sizeof(cmd_buf), 
         "Date: %s\r\n"
         "Subject: %s\r\n"
         "From: %s <%s>\r\n"
-        "%s\r\n"
+        "%s%s" /* To: ... \r\n */
+        "%s%s" /* Cc: ... \r\n */
         "MIME-Version: 1.0\r\n"
         "Content-Type: multipart/mixed; boundary=\"%s\"\r\n\r\n", 
         date_str, 
-        cfg->subject, "System Alert", cfg->user, to_header, boundary);
+        cfg->subject, "System Alert", cfg->user, 
+        to_header, (strlen(to_header) > 0 ? "\r\n" : ""),
+        cc_header, (strlen(cc_header) > 0 ? "\r\n" : ""),
+        boundary);
     SSL_write(ssl, cmd_buf, strlen(cmd_buf));
 
     snprintf(cmd_buf, sizeof(cmd_buf), "--%s\r\nContent-Type: %s; charset=UTF-8\r\n\r\n", 
@@ -296,7 +358,7 @@ int send_email_attempt(EmailConfig *cfg) {
     if (cfg->use_mono) SSL_write(ssl, "</pre></div>", 12);
 
     /* 6. Attachments */
-    curr = cfg->att_head;
+    ListNode *curr = cfg->att_head;
     while (curr) {
         SSL_write(ssl, "\r\n", 2); 
         FILE *att_fp = fopen(curr->value, "rb");
@@ -354,10 +416,12 @@ void print_help(const char *prog_name) {
     printf("  -s, --server <host>    SMTP server address\n");
     printf("  -P, --port <port>      SMTP port (465=SSL, 587=STARTTLS)\n");
     printf("  -u, --user <email>     User email / Login (FROM)\n");
-    printf("  -t, --to <email>       Recipient email (multiple allowed, example: -t user1@ya.ru -t user2@gmail.com)\n");
+    printf("  -t, --to <email>       Recipient (To). Multiple allowed, example: -t user1@ya.ru -t user2@gmail.com\n");
+    printf("  -c, --cc <email>       Carbon Copy (cc). Multiple allowed.\n");
+    printf("  --bcc <email>          Blind Carbon Copy (bcc). Multiple allowed.\n");
     printf("  -S, --subject <text>   Email subject\n");
     printf("  -b, --body <text>      Email body\n");
-    printf("  -a, --attach <file>    Attachment path (multiple allowed, example: -a file1 -a file2)\n");
+    printf("  -a, --attach <file>    Attachment path (multiple allowed)\n");
     printf("  -p, --secret <file>    Password file\n");
     printf("  -M, --mono             HTML Monospace mode\n");
     printf("  -v, --verbose          Verbose mode\n");
@@ -372,6 +436,8 @@ int read_password_from_file(const char *filename, char *buffer, size_t size) {
     buffer[strcspn(buffer, "\r\n")] = 0;
     return 1;
 }
+
+#define OPT_BCC 1001
 
 int main(int argc, char *argv[]) {
     if (argc <= 1) {
@@ -392,6 +458,8 @@ int main(int argc, char *argv[]) {
         {"port",    required_argument, 0, 'P'},
         {"user",    required_argument, 0, 'u'},
         {"to",      required_argument, 0, 't'},
+        {"cc",      required_argument, 0, 'c'},
+        {"bcc",     required_argument, 0, OPT_BCC},
         {"subject", required_argument, 0, 'S'},
         {"body",    required_argument, 0, 'b'},
         {"attach",  required_argument, 0, 'a'},
@@ -402,12 +470,14 @@ int main(int argc, char *argv[]) {
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "s:P:u:t:S:b:a:p:hMv", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:P:u:t:c:S:b:a:p:hMv", long_options, &option_index)) != -1) {
         switch (opt) {
             case 's': cfg.server = optarg; break;
             case 'P': cfg.port = atoi(optarg); break;
             case 'u': cfg.user = optarg; break;
             case 't': add_node(&cfg.rcpt_head, optarg); break;
+            case 'c': add_node(&cfg.cc_head, optarg); break;
+            case OPT_BCC: add_node(&cfg.bcc_head, optarg); break;
             case 'S': cfg.subject = optarg; break;
             case 'b': cfg.body = optarg; break;
             case 'a': add_node(&cfg.att_head, optarg); break;
@@ -419,8 +489,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (!cfg.server || !cfg.user || !cfg.rcpt_head) {
-        LOG_ERR("Missing required arguments (server, user, to).\n");
+    if (!cfg.server || !cfg.user || (!cfg.rcpt_head && !cfg.cc_head && !cfg.bcc_head)) {
+        LOG_ERR("Missing required arguments (server, user, and at least one recipient).\n");
         return 1;
     }
 
@@ -488,6 +558,8 @@ int main(int argc, char *argv[]) {
     if (stdin_buf) free(stdin_buf);
     free_list(cfg.att_head);
     free_list(cfg.rcpt_head);
+    free_list(cfg.cc_head);
+    free_list(cfg.bcc_head);
 
     return success ? 0 : 1;
 }
