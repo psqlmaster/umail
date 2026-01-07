@@ -121,7 +121,7 @@ int read_response(SSL *ssl) {
         LOG_S("SSL", "%s", buffer);
         /* Simple SMTP error check: 4xx or 5xx usually means error */
         if (buffer[0] == '4' || buffer[0] == '5') return 0; // Fail
-        return 1; // Success
+        return 1;
     }
     return 0;
 }
@@ -151,12 +151,11 @@ int raw_read_response(int sock) {
 }
 
 /* --- Core Sending Function --- */
-/* Returns 0 on Success, 1 on Error */
 int send_email_attempt(EmailConfig *cfg) {
     int sock = -1;
     SSL_CTX *ctx = NULL;
     SSL *ssl = NULL;
-    int ret_code = 1; // Default to error
+    int ret_code = 1; /* Default to error */
 
     /* 1. Init SSL */
     SSL_library_init();
@@ -249,6 +248,12 @@ int send_email_attempt(EmailConfig *cfg) {
     if (!send_cmd(ssl, "DATA\r\n")) goto cleanup;
 
     /* 5. Headers & Body */
+    char date_str[128];
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    /* RFC 2822 Format: Wed, 07 Jan 2026 22:30:00 +0300 */
+    strftime(date_str, sizeof(date_str), "%a, %d %b %Y %H:%M:%S %z", t);
+
     char boundary[64];
     snprintf(boundary, sizeof(boundary), "----_=_NextPart_%lx_%lx", (long)time(NULL), (long)getpid());
 
@@ -263,8 +268,13 @@ int send_email_attempt(EmailConfig *cfg) {
     }
 
     snprintf(cmd_buf, sizeof(cmd_buf), 
-        "Subject: %s\r\nFrom: %s <%s>\r\n%s\r\n"
-        "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"%s\"\r\n\r\n", 
+        "Date: %s\r\n"
+        "Subject: %s\r\n"
+        "From: %s <%s>\r\n"
+        "%s\r\n"
+        "MIME-Version: 1.0\r\n"
+        "Content-Type: multipart/mixed; boundary=\"%s\"\r\n\r\n", 
+        date_str, 
         cfg->subject, "System Alert", cfg->user, to_header, boundary);
     SSL_write(ssl, cmd_buf, strlen(cmd_buf));
 
@@ -280,10 +290,6 @@ int send_email_attempt(EmailConfig *cfg) {
     if (cfg->body) {
         SSL_write(ssl, cfg->body, strlen(cfg->body));
     } else {
-        /* If body is NULL, it was already read from STDIN into memory? 
-           NO. For retries to work, we cannot read STDIN multiple times. 
-           We must assume if body is NULL, we read STDIN ONCE into a buffer in main 
-           and pass it here. See main logic update. */
         LOG_ERR("Implementation Logic Error: Body should be buffered for retries.\n");
     }
     
@@ -325,7 +331,7 @@ int send_email_attempt(EmailConfig *cfg) {
         curr = curr->next;
     }
 
-    snprintf(cmd_buf, sizeof(cmd_buf), "--%s--\r\n", boundary);
+    snprintf(cmd_buf, sizeof(cmd_buf), "\r\n--%s--\r\n", boundary);
     SSL_write(ssl, cmd_buf, strlen(cmd_buf));
 
     if (!send_cmd(ssl, "\r\n.\r\n")) goto cleanup;
@@ -455,7 +461,7 @@ int main(int argc, char *argv[]) {
             }
             cfg.body = stdin_buf;
         } else {
-            cfg.body = ""; // Empty body if no pipe and no -b
+            cfg.body = "";
         }
     }
 
