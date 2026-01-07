@@ -8,6 +8,7 @@ A lightweight, dependency-free SMTP client written in C. Designed for minimal Li
 - **Secure:** Supports both **SMTPS** (Implicit SSL, port 465) and **STARTTLS** (port 587).
 - **Reliable:** Built-in network timeouts (15s) prevent hanging processes in cron jobs.
 - **Attachments:** Support for sending files (can be used multiple times) alongside text/HTML bodies.
+- **Mass Mailing:** Support for multiple recipients (multiple `-t` flags).
 - **Debug Friendly:** Detailed verbose mode (`-v`) to trace SMTP conversations and SSL handshakes.
 - **Memory Safe:** Passwords are scrubbed from memory immediately after use.
 - **Stealthy:** Supports reading credentials from protected files or environment variables.
@@ -51,7 +52,7 @@ lsblk -f | ./umail \
 ```
 
 **3. Send file with attachment**
-Send a specific file using the `SMTP_PASS` variable.
+Send specific files using the `SMTP_PASS` variable.
 
 ```sh
 export SMTP_PASS="secret_password"
@@ -60,9 +61,9 @@ export SMTP_PASS="secret_password"
   -u from@gmail.com \
   -t to@corp.com \
   -S "Daily Log" \
-  -b "Please check the attached log file." \
+  -b "Please check the attached log files." \
   -a "/var/log/syslog" \
-  -a "/var/log/syslog.1" 
+  -a "/var/log/auth.log"
 ```
 
 **4. Use STARTTLS (Port 587)**
@@ -87,7 +88,7 @@ Usage: ./umail [OPTIONS]
   -s, --server <host>    SMTP server address (e.g., smtp.gmail.com)
   -P, --port <port>      SMTP port (465 for Implicit SSL, 587 for STARTTLS)
   -u, --user <email>     User email / Login (FROM)
-  -t, --to <email>       Recipient email (TO)
+  -t, --to <email>       Recipient email (can be used multiple times)
   -S, --subject <text>   Email subject
   -b, --body <text>      Email body. If omitted, reads from STDIN.
   -a, --attach <file>    File attachment path (can be used multiple times) 
@@ -100,7 +101,9 @@ Environment Variables:
   SMTP_PASS              Password or App Password (used if -p is omitted)
 ```
 
-##### Example send mail: "Full Server Report"
+##### Example: "Full Server Report"
+
+You can group multiple commands to create a beautiful HTML report.
 
 ```sh
 (
@@ -121,7 +124,7 @@ Environment Variables:
   --mono
 ```  
 
-***mail body***
+***Result (Email Body):***
 ```text
 === SERVER UPTIME ===
  21:42:00 up  8:59,  1 user,  load average: 3.92, 3.75, 3.74
@@ -130,20 +133,9 @@ Environment Variables:
 Filesystem      Size  Used Avail Use% Mounted on
 udev             16G     0   16G   0% /dev
 tmpfs           3.2G  1.9M  3.2G   1% /run
-efivarfs        128K   64K   60K  52% /sys/firmware/efi/efivars
 /dev/md0        193G  107G   77G  59% /
-tmpfs            16G   49M   16G   1% /dev/shm
-none            1.0M     0  1.0M   0% /run/credentials/systemd-journald.service
-none            1.0M     0  1.0M   0% /run/credentials/systemd-resolved.service
-tmpfs            16G   24M   16G   1% /tmp
 /dev/nvme1n1p3  274G  217G   44G  84% /mnt/backup
-/dev/nvme0n1p4  247G   68G  167G  29% /mnt/new_free
-/dev/nvme1n1p2  511M   50M  462M  10% /boot/efi
 /dev/sda1       916G  509G  363G  59% /mnt/share
-s3fs             64P     0   64P   0% /mnt/s3_nata
-s3fs             64P     0   64P   0% /mnt/s3
-none            1.0M     0  1.0M   0% /run/credentials/getty@tty1.service
-tmpfs           3.2G  4.1M  3.2G   1% /run/user/1001
 
 === MEMORY ===
                total        used        free      shared  buff/cache   available

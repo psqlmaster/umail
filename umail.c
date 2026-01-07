@@ -14,45 +14,44 @@
 #define BUF_SIZE 4096
 #define TIMEOUT_SEC 15
 
-/* --- Global & Macros --- */
 int verbose = 0;
+
 #define LOG_S(type, fmt, ...) \
     do { if (verbose) printf("\033[0;33mSERVER(%s):\033[0m " fmt, type, ##__VA_ARGS__); } while (0)
+
 #define LOG_C(type, fmt, ...) \
     do { if (verbose) printf("\033[0;32mCLIENT(%s):\033[0m " fmt, type, ##__VA_ARGS__); } while (0)
+
 #define LOG_I(fmt, ...) \
     do { if (verbose) printf(fmt, ##__VA_ARGS__); } while (0)
 
-/* --- Linked List for Attachments --- */
-typedef struct Attachment {
-    char *path;
-    struct Attachment *next;
-} Attachment;
+/* --- Linked Lists --- */
+typedef struct ListNode {
+    char *value;
+    struct ListNode *next;
+} ListNode;
 
-void add_attachment(Attachment **head, const char *path) {
-    Attachment *new_node = malloc(sizeof(Attachment));
-    if (!new_node) {
-        fprintf(stderr, "Error: Memory allocation failed\n");
-        exit(1);
-    }
-    new_node->path = strdup(path);
+void add_node(ListNode **head, const char *value) {
+    ListNode *new_node = malloc(sizeof(ListNode));
+    if (!new_node) exit(1);
+    new_node->value = strdup(value);
     new_node->next = NULL;
 
     if (*head == NULL) {
         *head = new_node;
     } else {
-        Attachment *current = *head;
+        ListNode *current = *head;
         while (current->next) current = current->next;
         current->next = new_node;
     }
 }
 
-void free_attachments(Attachment *head) {
-    Attachment *tmp;
+void free_list(ListNode *head) {
+    ListNode *tmp;
     while (head != NULL) {
         tmp = head;
         head = head->next;
-        free(tmp->path);
+        free(tmp->value);
         free(tmp);
     }
 }
@@ -72,7 +71,6 @@ char *base64_encode(const unsigned char *data, size_t input_length) {
     size_t output_length = 4 * ((input_length + 2) / 3);
     char *encoded_data = malloc(output_length + 1);
     if (encoded_data == NULL) return NULL;
-
     for (size_t i = 0, j = 0; i < input_length;) {
         uint32_t octet_a = i < input_length ? (unsigned char)data[i++] : 0;
         uint32_t octet_b = i < input_length ? (unsigned char)data[i++] : 0;
@@ -94,13 +92,12 @@ const char *get_filename(const char *path) {
     return (filename == NULL) ? path : filename + 1;
 }
 
-/* --- Network Helpers (SSL) --- */
+/* --- Network Helpers --- */
 int read_response(SSL *ssl) {
     char buffer[BUF_SIZE];
     int bytes;
     memset(buffer, 0, BUF_SIZE);
     bytes = SSL_read(ssl, buffer, BUF_SIZE - 1);
-    
     if (bytes > 0) {
         LOG_S("SSL", "%s", buffer);
         return 1;
@@ -114,14 +111,12 @@ void send_cmd(SSL *ssl, const char *cmd) {
     } else {
         LOG_C("SSL", "%s", cmd);
     }
-
     if (SSL_write(ssl, cmd, strlen(cmd)) <= 0) {
         ERR_print_errors_fp(stderr);
     }
     read_response(ssl);
 }
 
-/* --- Network Helpers (Raw Socket for STARTTLS) --- */
 int raw_read_response(int sock) {
     char buffer[BUF_SIZE];
     memset(buffer, 0, BUF_SIZE);
@@ -147,14 +142,14 @@ void print_help(const char *prog_name) {
     printf("  -s, --server <host>    SMTP server address\n");
     printf("  -P, --port <port>      SMTP port (465=SSL, 587=STARTTLS)\n");
     printf("  -u, --user <email>     User email / Login (FROM)\n");
-    printf("  -t, --to <email>       Recipient email (TO)\n");
+    printf("  -t, --to <email>       Recipient email (can be used multiple times)\n");
     printf("  -S, --subject <text>   Email subject\n");
-    printf("  -b, --body <text>      Email body (optional)\n");
-    printf("  -a, --attach <file>    File attachment path (can be used multiple times)\n");
-    printf("  -p, --secret <file>    File containing password\n");
-    printf("  -M, --mono             Send as HTML Monospace\n");
-    printf("  -v, --verbose          Enable verbose debug output\n");
-    printf("  -h, --help             Show this help message\n\n");
+    printf("  -b, --body <text>      Email body\n");
+    printf("  -a, --attach <file>    Attachment path (can be used multiple times)\n");
+    printf("  -p, --secret <file>    Password file\n");
+    printf("  -M, --mono             HTML Monospace mode\n");
+    printf("  -v, --verbose          Verbose mode\n");
+    printf("  -h, --help             Show help\n\n");
 }
 
 int read_password_from_file(const char *filename, char *buffer, size_t size) {
@@ -169,8 +164,7 @@ int read_password_from_file(const char *filename, char *buffer, size_t size) {
 int main(int argc, char *argv[]) {
     if (argc <= 1) {
         const char *prog_name = (argc > 0 && argv[0]) ? argv[0] : "umail";
-        print_help(prog_name);
-        return 1;
+        print_help(prog_name); return 1;
     }
 
     int opt;
@@ -179,11 +173,11 @@ int main(int argc, char *argv[]) {
     char *server = NULL;
     int port = 465;
     char *user = NULL;
-    char *to = NULL;
     char *subject = "No Subject";
     char *body = NULL;
     char *secret_file = NULL;
-    Attachment *att_head = NULL; /* Head of the linked list */
+    ListNode *att_head = NULL; /* Attachments list */
+    ListNode *rcpt_head = NULL; /* Recipients list */
     int use_mono = 0;
     
     char password[256]; 
@@ -209,66 +203,63 @@ int main(int argc, char *argv[]) {
             case 's': server = optarg; break;
             case 'P': port = atoi(optarg); break;
             case 'u': user = optarg; break;
-            case 't': to = optarg; break;
+            case 't': add_node(&rcpt_head, optarg); break; /* Add Recipient */
             case 'S': subject = optarg; break;
             case 'b': body = optarg; break;
-            case 'a': add_attachment(&att_head, optarg); break; /* Add to list */
+            case 'a': add_node(&att_head, optarg); break; /* Add Attachment */
             case 'p': secret_file = optarg; break;
             case 'M': use_mono = 1; break;
             case 'v': verbose = 1; break;
-            case 'h': print_help(argv[0]); free_attachments(att_head); return 0;
-            case '?': default: print_help(argv[0]); free_attachments(att_head); return 1;
+            case 'h': print_help(argv[0]); free_list(att_head); free_list(rcpt_head); return 0;
+            case '?': default: print_help(argv[0]); free_list(att_head); free_list(rcpt_head); return 1;
         }
     }
 
-    if (!server || !user || !to) {
-        fprintf(stderr, "Error: Missing required arguments.\n");
-        free_attachments(att_head);
-        return 1;
+    if (!server || !user || !rcpt_head) {
+        fprintf(stderr, "Error: Missing required arguments (server, user, to).\n");
+        free_list(att_head); free_list(rcpt_head); return 1;
     }
 
-    /* Validate Attachments Access before starting network */
-    Attachment *curr = att_head;
+    /* Validate Attachments */
+    ListNode *curr = att_head;
     while (curr) {
-        FILE *test_fp = fopen(curr->path, "rb");
+        FILE *test_fp = fopen(curr->value, "rb");
         if (!test_fp) {
-            fprintf(stderr, "Error: Cannot open attachment file: %s\n", curr->path);
-            free_attachments(att_head);
-            return 1;
+            fprintf(stderr, "Error: Cannot open attachment file: %s\n", curr->value);
+            free_list(att_head); free_list(rcpt_head); return 1;
         }
         fclose(test_fp);
         curr = curr->next;
     }
 
+    /* Password Logic */
     if (secret_file) {
         if (!read_password_from_file(secret_file, password, sizeof(password))) {
-            fprintf(stderr, "Failed to read password from file\n");
-            free_attachments(att_head);
-            return 1;
+            fprintf(stderr, "Failed to read password\n");
+            free_list(att_head); free_list(rcpt_head); return 1;
         }
     } else {
         char *env_pass = getenv("SMTP_PASS");
-        if (env_pass) {
-            strncpy(password, env_pass, sizeof(password) - 1);
-        } else {
-            fprintf(stderr, "Error: Password not provided (use --secret or SMTP_PASS)\n");
-            free_attachments(att_head);
-            return 1;
+        if (env_pass) strncpy(password, env_pass, sizeof(password) - 1);
+        else {
+            fprintf(stderr, "Error: Password not provided\n");
+            free_list(att_head); free_list(rcpt_head); return 1;
         }
     }
 
+    /* Network Init */
     SSL_library_init();
     OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
     const SSL_METHOD *method = TLS_client_method();
     SSL_CTX *ctx = SSL_CTX_new(method);
-    if (!ctx) { ERR_print_errors_fp(stderr); free_attachments(att_head); return 1; }
+    if (!ctx) { ERR_print_errors_fp(stderr); free_list(att_head); free_list(rcpt_head); return 1; }
 
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     struct hostent *host = gethostbyname(server);
     if (!host) {
         fprintf(stderr, "Error: Cannot resolve hostname %s\n", server);
-        free_attachments(att_head); return 1;
+        free_list(att_head); free_list(rcpt_head); return 1;
     }
 
     struct timeval timeout;
@@ -285,26 +276,23 @@ int main(int argc, char *argv[]) {
     LOG_I("Connecting to %s:%d (Timeout: %ds)...\n", server, port, TIMEOUT_SEC);
     if (connect(sock, (struct sockaddr *)&addr, sizeof(struct sockaddr)) != 0) {
         perror("Unable to connect");
-        free_attachments(att_head); return 1;
+        free_list(att_head); free_list(rcpt_head); return 1;
     }
 
+    /* STARTTLS / SSL Logic */
     int starttls_mode = (port == 587);
-    
     if (starttls_mode) {
         raw_read_response(sock);
         raw_send_cmd(sock, "EHLO mylinuxserver\r\n");
-        
         LOG_C("RAW", "STARTTLS\r\n");
         send(sock, "STARTTLS\r\n", 10, 0);
-        
         char buf[1024];
         int n = recv(sock, buf, sizeof(buf)-1, 0);
         if (n > 0) buf[n] = 0;
         LOG_S("RAW", "%s", buf);
-
         if (n <= 0 || strstr(buf, "220") == NULL) {
             fprintf(stderr, "Error: STARTTLS rejected.\n");
-            close(sock); free_attachments(att_head); return 1;
+            close(sock); free_list(att_head); free_list(rcpt_head); return 1;
         }
     }
 
@@ -312,7 +300,7 @@ int main(int argc, char *argv[]) {
     SSL_set_fd(ssl, sock);
     if (SSL_connect(ssl) <= 0) {
         ERR_print_errors_fp(stderr);
-        close(sock); free_attachments(att_head); return 1;
+        close(sock); free_list(att_head); free_list(rcpt_head); return 1;
     }
 
     if (!starttls_mode) read_response(ssl);
@@ -334,38 +322,45 @@ int main(int argc, char *argv[]) {
     char cmd_buf[BUF_SIZE];
     snprintf(cmd_buf, sizeof(cmd_buf), "MAIL FROM: <%s>\r\n", user);
     send_cmd(ssl, cmd_buf);
-    snprintf(cmd_buf, sizeof(cmd_buf), "RCPT TO: <%s>\r\n", to);
-    send_cmd(ssl, cmd_buf);
+
+    /* --- Multi-Recipient Logic: RCPT TO Loop --- */
+    curr = rcpt_head;
+    while (curr) {
+        snprintf(cmd_buf, sizeof(cmd_buf), "RCPT TO: <%s>\r\n", curr->value);
+        send_cmd(ssl, cmd_buf);
+        curr = curr->next;
+    }
+
     send_cmd(ssl, "DATA\r\n");
 
+    /* --- Headers Generation --- */
     char boundary[64];
     snprintf(boundary, sizeof(boundary), "----_=_NextPart_%lx_%lx", (long)time(NULL), (long)getpid());
 
-    if (att_head != NULL) {
-        /* Multipart Header if there are attachments */
-        snprintf(cmd_buf, sizeof(cmd_buf), 
-            "Subject: %s\r\nFrom: %s <%s>\r\nTo: %s\r\n"
-            "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"%s\"\r\n\r\n", 
-            subject, "System Alert", user, to, boundary);
-        SSL_write(ssl, cmd_buf, strlen(cmd_buf));
-
-        /* Part 1: Body */
-        snprintf(cmd_buf, sizeof(cmd_buf), "--%s\r\nContent-Type: %s; charset=UTF-8\r\n\r\n", 
-            boundary, use_mono ? "text/html" : "text/plain");
-        SSL_write(ssl, cmd_buf, strlen(cmd_buf));
-    } else {
-        /* Simple Header if no attachments */
-        snprintf(cmd_buf, sizeof(cmd_buf), 
-            "Subject: %s\r\nFrom: %s <%s>\r\nTo: %s\r\n"
-            "MIME-Version: 1.0\r\nContent-Type: %s; charset=UTF-8\r\n\r\n", 
-            subject, "System Alert", user, to, use_mono ? "text/html" : "text/plain");
-        SSL_write(ssl, cmd_buf, strlen(cmd_buf));
+    /* Construct "To: user1, user2" string */
+    char to_header[BUF_SIZE] = "To: ";
+    curr = rcpt_head;
+    while (curr) {
+        if (strlen(to_header) + strlen(curr->value) + 5 < BUF_SIZE) {
+            strcat(to_header, curr->value);
+            if (curr->next) strcat(to_header, ", ");
+        }
+        curr = curr->next;
     }
 
+    snprintf(cmd_buf, sizeof(cmd_buf), 
+        "Subject: %s\r\nFrom: %s <%s>\r\n%s\r\n"
+        "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"%s\"\r\n\r\n", 
+        subject, "System Alert", user, to_header, boundary);
+    SSL_write(ssl, cmd_buf, strlen(cmd_buf));
+
+    /* Body Part */
+    snprintf(cmd_buf, sizeof(cmd_buf), "--%s\r\nContent-Type: %s; charset=UTF-8\r\n\r\n", 
+        boundary, use_mono ? "text/html" : "text/plain");
+    SSL_write(ssl, cmd_buf, strlen(cmd_buf));
+
     if (use_mono) {
-        const char *html_start = 
-            "<div style='background-color:#f5f5f5; padding:10px; border-radius:5px;'>"
-            "<pre style='font-family: Consolas, monospace; font-size: 14px; color: #333;'>";
+        const char *html_start = "<div style='background-color:#f5f5f5; padding:10px;'><pre style='font-family: Consolas, monospace;'>";
         SSL_write(ssl, html_start, strlen(html_start));
     }
     
@@ -378,16 +373,15 @@ int main(int argc, char *argv[]) {
     }
     
     if (use_mono) {
-        const char *html_end = "</pre></div>";
-        SSL_write(ssl, html_end, strlen(html_end));
+        SSL_write(ssl, "</pre></div>", 12);
     }
 
-    /* Loop through attachments */
+    /* Attachments Loop */
     curr = att_head;
     while (curr) {
         SSL_write(ssl, "\r\n", 2); 
         
-        FILE *att_fp = fopen(curr->path, "rb");
+        FILE *att_fp = fopen(curr->value, "rb");
         if (att_fp) {
             fseek(att_fp, 0, SEEK_END);
             long file_size = ftell(att_fp);
@@ -397,7 +391,7 @@ int main(int argc, char *argv[]) {
                 "--%s\r\nContent-Type: application/octet-stream; name=\"%s\"\r\n"
                 "Content-Disposition: attachment; filename=\"%s\"\r\n"
                 "Content-Transfer-Encoding: base64\r\n\r\n",
-                boundary, get_filename(curr->path), get_filename(curr->path));
+                boundary, get_filename(curr->value), get_filename(curr->value));
             SSL_write(ssl, cmd_buf, strlen(cmd_buf));
 
             unsigned char *file_content = malloc(file_size);
@@ -415,18 +409,12 @@ int main(int argc, char *argv[]) {
             }
             if(file_content) free(file_content);
             fclose(att_fp);
-        } else {
-             fprintf(stderr, "Warning: Failed to read attachment during send: %s\n", curr->path);
         }
-        
         curr = curr->next;
     }
 
-    /* Only send closing boundary if we had attachments */
-    if (att_head != NULL) {
-        snprintf(cmd_buf, sizeof(cmd_buf), "--%s--\r\n", boundary);
-        SSL_write(ssl, cmd_buf, strlen(cmd_buf));
-    }
+    snprintf(cmd_buf, sizeof(cmd_buf), "--%s--\r\n", boundary);
+    SSL_write(ssl, cmd_buf, strlen(cmd_buf));
 
     send_cmd(ssl, "\r\n.\r\n");
     send_cmd(ssl, "QUIT\r\n");
@@ -435,7 +423,9 @@ int main(int argc, char *argv[]) {
     SSL_free(ssl);
     close(sock);
     SSL_CTX_free(ctx);
-    free_attachments(att_head);
+    free_list(att_head);
+    free_list(rcpt_head);
 
     return 0;
 }
+
