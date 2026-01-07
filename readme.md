@@ -145,3 +145,6 @@ tmpfs           3.2G  1.9M  3.2G   1% /run
 Mem:            31Gi        20Gi       1.4Gi       209Mi         9Gi        10Gi
 Swap:           27Gi          0B        27Gi
 ```
+
+- Use umail if: You need to send alerts, logs, backup logs from servers, Docker containers, Raspberry Pi, or routers. You don't want to configure Postfix. You want nice one-line HTML reports. 
+- Bottom line: No dependencies. No Postfix. Just a binary and the internet.
