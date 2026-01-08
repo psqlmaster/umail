@@ -6,7 +6,7 @@
 #include <sys/socket.h>
 #include <sys/time.h> 
 #include <netinet/in.h>
-#include <arpa/inet.h> /* Added for inet_ntop */
+#include <arpa/inet.h>
 #include <netdb.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -324,22 +324,34 @@ int send_email_attempt(EmailConfig *cfg) {
     build_address_header(to_header, BUF_SIZE, "To: ", cfg->rcpt_head);
     build_address_header(cc_header, BUF_SIZE, "Cc: ", cfg->cc_head);
 
-    /* Construct Headers (BCC is NOT included here by definition) */
+    /* --- FIXED: Send headers in chunks to avoid snprintf truncation warnings --- */
+
+    /* 5.1 Basic Headers */
     snprintf(cmd_buf, sizeof(cmd_buf), 
         "Date: %s\r\n"
         "Subject: %s\r\n"
-        "From: %s <%s>\r\n"
-        "%s%s" /* To: ... \r\n */
-        "%s%s" /* Cc: ... \r\n */
+        "From: %s <%s>\r\n",
+        date_str, cfg->subject, "System Alert", cfg->user);
+    if (SSL_write(ssl, cmd_buf, strlen(cmd_buf)) <= 0) goto cleanup;
+
+    /* 5.2 Recipient Headers (To/Cc) */
+    if (strlen(to_header) > 0) {
+        SSL_write(ssl, to_header, strlen(to_header));
+        SSL_write(ssl, "\r\n", 2);
+    }
+    if (strlen(cc_header) > 0) {
+        SSL_write(ssl, cc_header, strlen(cc_header));
+        SSL_write(ssl, "\r\n", 2);
+    }
+
+    /* 5.3 MIME Headers */
+    snprintf(cmd_buf, sizeof(cmd_buf), 
         "MIME-Version: 1.0\r\n"
         "Content-Type: multipart/mixed; boundary=\"%s\"\r\n\r\n", 
-        date_str, 
-        cfg->subject, "System Alert", cfg->user, 
-        to_header, (strlen(to_header) > 0 ? "\r\n" : ""),
-        cc_header, (strlen(cc_header) > 0 ? "\r\n" : ""),
         boundary);
-    SSL_write(ssl, cmd_buf, strlen(cmd_buf));
+    if (SSL_write(ssl, cmd_buf, strlen(cmd_buf)) <= 0) goto cleanup;
 
+    /* 5.4 Body Part */
     snprintf(cmd_buf, sizeof(cmd_buf), "--%s\r\nContent-Type: %s; charset=UTF-8\r\n\r\n", 
         boundary, cfg->use_mono ? "text/html" : "text/plain");
     SSL_write(ssl, cmd_buf, strlen(cmd_buf));
@@ -416,9 +428,9 @@ void print_help(const char *prog_name) {
     printf("  -s, --server <host>    SMTP server address\n");
     printf("  -P, --port <port>      SMTP port (465=SSL, 587=STARTTLS)\n");
     printf("  -u, --user <email>     User email / Login (FROM)\n");
-    printf("  -t, --to <email>       Recipient (To). Multiple allowed, example: -t user1@ya.ru -t user2@gmail.com\n");
-    printf("  -c, --cc <email>       Carbon Copy (cc). Multiple allowed.\n");
-    printf("  --bcc <email>          Blind Carbon Copy (bcc). Multiple allowed.\n");
+    printf("  -t, --to <email>       Recipient (To). Multiple allowed.\n");
+    printf("  -c, --cc <email>       Carbon Copy (Cc). Multiple allowed.\n");
+    printf("  --bcc <email>          Blind Carbon Copy (Bcc). Multiple allowed.\n");
     printf("  -S, --subject <text>   Email subject\n");
     printf("  -b, --body <text>      Email body\n");
     printf("  -a, --attach <file>    Attachment path (multiple allowed)\n");

@@ -3,6 +3,9 @@
 
 A lightweight, dependency-free SMTP client written in C. Designed for minimal Linux servers, embedded systems, and secure environments where installing full MTAs (like Postfix or Sendmail) is not possible.
 
+- Use umail if: You need to send alerts, logs, backup logs from servers, Docker containers, Raspberry Pi, or routers. You don't want to configure Postfix. You want nice one-line HTML reports. 
+- Bottom line: No dependencies. No Postfix. Just a binary and the internet.
+
 ##### Key Features
 - **Single binary:** No external dependencies (except libssl).
 - **Secure:** Supports both **SMTPS** (Implicit SSL, port 465) and **STARTTLS** (port 587).
@@ -18,6 +21,10 @@ A lightweight, dependency-free SMTP client written in C. Designed for minimal Li
 ```sh
 git clone --depth 1 https://github.com/psqlmaster/umail.git && cd umail && \
 gcc -Os -o umail umail.c -lssl -lcrypto && strip umail && ./umail -h
+```
+OR
+```sh
+make && sudo make install && umail -h
 ```
 
 ##### Quick Start
@@ -146,5 +153,37 @@ Mem:            31Gi        20Gi       1.4Gi       209Mi         9Gi        10Gi
 Swap:           27Gi          0B        27Gi
 ```
 
-- Use umail if: You need to send alerts, logs, backup logs from servers, Docker containers, Raspberry Pi, or routers. You don't want to configure Postfix. You want nice one-line HTML reports. 
-- Bottom line: No dependencies. No Postfix. Just a binary and the internet.
+##### Example: "Global Bash Config" (Wrapper)
+
+Create a shell wrapper to avoid typing credentials and server details every time.
+
+**1. Create a script file (e.g., `um`)**
+
+```bash
+#!/bin/bash
+
+# usage example:
+# ./um -S "Backup Failed" -b "Check logs" -a file1 -a file2
+
+/usr/bin/umail \
+  --server smtp.gmail.com \
+  --user from_address@gmail.com \
+  --to to_address1@gmail.com \
+  --cc to_address2@gmail.com \
+  --secret /var/tmp/.umail/.umail \
+  "$@"
+```
+
+**2. Make it executable**
+
+```bash
+chmod +x um
+```
+
+**3. Usage**
+
+Now you can send emails with attachments using just the subject and body:
+
+```bash
+./um -S "Critical Error" -b "See attached logs" -a /var/log/syslog
+```
