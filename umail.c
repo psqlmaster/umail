@@ -328,7 +328,7 @@ int send_email_attempt(EmailConfig *cfg) {
         boundary);
     SSL_write(ssl, cmd_buf, strlen(cmd_buf));
 
-    /* 5.4 Body Part (ОБНОВЛЕННАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ ТИПА) */
+    /* 5.4 Body Part */
     int is_html = 0;
     if (cfg->use_mono) {
         is_html = 1;
@@ -341,7 +341,6 @@ int send_email_attempt(EmailConfig *cfg) {
     SSL_write(ssl, cmd_buf, strlen(cmd_buf));
 
     if (cfg->use_mono) {
-        /* Используем стиль из второго модуля для консистентности */
         const char *html_start = "<div style='font-family:monospace;white-space:pre;'>";
         SSL_write(ssl, html_start, strlen(html_start));
     }
