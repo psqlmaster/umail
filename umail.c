@@ -218,13 +218,11 @@ int send_email_attempt(EmailConfig *cfg) {
         sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
         if (sock == -1) continue;
 
-        /* Set Timeouts */
         struct timeval timeout;
         timeout.tv_sec = TIMEOUT_SEC; timeout.tv_usec = 0;
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 
-        /* Logging IP */
         char ipstr[INET6_ADDRSTRLEN];
         void *addr;
         if (p->ai_family == AF_INET) {
@@ -247,13 +245,12 @@ int send_email_attempt(EmailConfig *cfg) {
     }
 
     if (res) freeaddrinfo(res);
-
     if (sock == -1) {
         LOG_ERR("Failed to connect to any address for %s\n", cfg->server);
         goto cleanup;
     }
 
-    /* 3. Handshake */
+    /* 3. Handshake (STARTTLS logic) */
     int starttls_mode = (cfg->port == 587 || cfg->port == 25);
     if (starttls_mode) {
         if (!raw_read_response(sock)) goto cleanup;
@@ -276,7 +273,6 @@ int send_email_attempt(EmailConfig *cfg) {
         if (verbose) ERR_print_errors_fp(stderr);
         goto cleanup;
     }
-
     if (!starttls_mode) if (!read_response(ssl)) goto cleanup;
 
     /* 4. SMTP Flow */
@@ -289,17 +285,14 @@ int send_email_attempt(EmailConfig *cfg) {
     char auth_buf[BUF_SIZE];
     snprintf(auth_buf, sizeof(auth_buf), "%s\r\n", b64_user);
     if (!send_cmd(ssl, auth_buf)) { free(b64_user); free(b64_pass); goto cleanup; }
-    
     snprintf(auth_buf, sizeof(auth_buf), "%s\r\n", b64_pass);
     if (!send_cmd(ssl, auth_buf)) { free(b64_user); free(b64_pass); goto cleanup; }
-    
     free(b64_user); free(b64_pass);
 
     char cmd_buf[BUF_SIZE];
     snprintf(cmd_buf, sizeof(cmd_buf), "MAIL FROM: <%s>\r\n", cfg->user);
     if (!send_cmd(ssl, cmd_buf)) goto cleanup;
 
-    /* SEND RCPT TO for ALL lists (To, Cc, Bcc) */
     if (!send_rcpt_list(ssl, cfg->rcpt_head)) goto cleanup;
     if (!send_rcpt_list(ssl, cfg->cc_head)) goto cleanup;
     if (!send_rcpt_list(ssl, cfg->bcc_head)) goto cleanup;
@@ -307,67 +300,60 @@ int send_email_attempt(EmailConfig *cfg) {
     if (!send_cmd(ssl, "DATA\r\n")) goto cleanup;
 
     /* 5. Headers & Body */
-    
-    /* Headers Generation */
     char date_str[128];
     time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    strftime(date_str, sizeof(date_str), "%a, %d %b %Y %H:%M:%S %z", t);
+    strftime(date_str, sizeof(date_str), "%a, %d %b %Y %H:%M:%S %z", localtime(&now));
 
     char boundary[64];
     snprintf(boundary, sizeof(boundary), "----_=_NextPart_%lx_%lx", (long)time(NULL), (long)getpid());
 
-    /* Build To: and Cc: strings */
     char to_header[BUF_SIZE];
     char cc_header[BUF_SIZE];
-    
     build_address_header(to_header, BUF_SIZE, "To: ", cfg->rcpt_head);
     build_address_header(cc_header, BUF_SIZE, "Cc: ", cfg->cc_head);
 
-    /* --- FIXED: Send headers in chunks to avoid snprintf truncation warnings --- */
-
-    /* 5.1 Basic Headers */
     snprintf(cmd_buf, sizeof(cmd_buf), 
         "Date: %s\r\n"
         "Subject: %s\r\n"
         "From: %s <%s>\r\n",
         date_str, cfg->subject, "System Alert", cfg->user);
-    if (SSL_write(ssl, cmd_buf, strlen(cmd_buf)) <= 0) goto cleanup;
+    SSL_write(ssl, cmd_buf, strlen(cmd_buf));
 
-    /* 5.2 Recipient Headers (To/Cc) */
-    if (strlen(to_header) > 0) {
-        SSL_write(ssl, to_header, strlen(to_header));
-        SSL_write(ssl, "\r\n", 2);
-    }
-    if (strlen(cc_header) > 0) {
-        SSL_write(ssl, cc_header, strlen(cc_header));
-        SSL_write(ssl, "\r\n", 2);
-    }
+    if (strlen(to_header) > 0) { SSL_write(ssl, to_header, strlen(to_header)); SSL_write(ssl, "\r\n", 2); }
+    if (strlen(cc_header) > 0) { SSL_write(ssl, cc_header, strlen(cc_header)); SSL_write(ssl, "\r\n", 2); }
 
-    /* 5.3 MIME Headers */
     snprintf(cmd_buf, sizeof(cmd_buf), 
         "MIME-Version: 1.0\r\n"
         "Content-Type: multipart/mixed; boundary=\"%s\"\r\n\r\n", 
         boundary);
-    if (SSL_write(ssl, cmd_buf, strlen(cmd_buf)) <= 0) goto cleanup;
+    SSL_write(ssl, cmd_buf, strlen(cmd_buf));
 
-    /* 5.4 Body Part */
+    /* 5.4 Body Part (ОБНОВЛЕННАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ ТИПА) */
+    int is_html = 0;
+    if (cfg->use_mono) {
+        is_html = 1;
+    } else if (cfg->body && (strncasecmp(cfg->body, "<html>", 6) == 0 || strncasecmp(cfg->body, "<!DOCTYPE", 9) == 0)) {
+        is_html = 1;
+    }
+
     snprintf(cmd_buf, sizeof(cmd_buf), "--%s\r\nContent-Type: %s; charset=UTF-8\r\n\r\n", 
-        boundary, cfg->use_mono ? "text/html" : "text/plain");
+        boundary, is_html ? "text/html" : "text/plain");
     SSL_write(ssl, cmd_buf, strlen(cmd_buf));
 
     if (cfg->use_mono) {
-        const char *html_start = "<div style='background-color:#f5f5f5; padding:10px;'><pre style='font-family: Consolas, monospace;'>";
+        /* Используем стиль из второго модуля для консистентности */
+        const char *html_start = "<div style='font-family:monospace;white-space:pre;'>";
         SSL_write(ssl, html_start, strlen(html_start));
     }
     
     if (cfg->body) {
         SSL_write(ssl, cfg->body, strlen(cfg->body));
-    } else {
-        LOG_ERR("Implementation Logic Error: Body should be buffered for retries.\n");
     }
     
-    if (cfg->use_mono) SSL_write(ssl, "</pre></div>", 12);
+    if (cfg->use_mono) {
+        const char *html_end = "</div>";
+        SSL_write(ssl, html_end, strlen(html_end));
+    }
 
     /* 6. Attachments */
     ListNode *curr = cfg->att_head;
